@@ -34,13 +34,29 @@ jobs:
                    "S64,S76,S92,H60,H53,H47,H64,V22,MD52,MD60,EXPL,HU50,H269,KA26,KA27,KA32,KA52,KA62,"
                    "MI2,MI8,MI14,MI17,MI24,MI26,MI28,MI34,MI38,EN28,EN48,G2CA,NH90,DHRU")
 
+          # Zones denses sur les 6 continents (hélicos sans code type, catégorie A7)
           CIRCLES = [
+              # Amérique du Nord & Caraïbes
               (40.8, -74.2, 250), (33.5, -84.5, 250), (26.5, -81.0, 250),
               (28.8, -91.5, 250), (30.5, -97.5, 250), (36.5, -119.5, 250),
-              (47.5, -122.5, 250), (49.5, -114.0, 250), (48.5, 1.5, 250),
-              (44.5, 4.5, 250), (54.5, 3.5, 250), (52.5, -1.5, 250),
-              (60.5, 5.0, 250), (45.5, 8.5, 250), (25.5, 52.5, 250),
-              (35.5, 137.0, 250), (-33.0, 150.5, 250), (-22.5, -45.5, 250),
+              (47.5, -122.5, 250), (49.5, -114.0, 250), (19.4, -99.1, 250),
+              (18.3, -66.0, 250),
+              # Amérique du Sud
+              (4.6, -74.1, 250), (-12.0, -77.0, 250), (-33.4, -70.7, 250),
+              (-34.6, -58.4, 250), (-22.5, -45.5, 250), (-15.8, -47.9, 250),
+              # Europe
+              (48.5, 1.5, 250), (44.5, 4.5, 250), (54.5, 3.5, 250),
+              (52.5, -1.5, 250), (60.5, 5.0, 250), (45.5, 8.5, 250),
+              (40.0, -3.7, 250), (38.5, 23.5, 250), (52.3, 21.0, 250),
+              # Afrique & Moyen-Orient
+              (25.5, 52.5, 250), (30.0, 31.2, 250), (4.5, 5.0, 250),
+              (-26.2, 28.0, 250), (-1.3, 36.8, 250), (32.0, 34.8, 250),
+              # Asie
+              (19.0, 72.5, 250), (28.6, 77.2, 250), (13.7, 100.5, 250),
+              (2.5, 103.0, 250), (22.3, 113.9, 250), (37.5, 127.0, 250),
+              (35.5, 137.0, 250), (24.0, 121.0, 250),
+              # Océanie
+              (-33.0, 150.5, 250), (-31.9, 115.9, 250), (-41.0, 174.0, 250),
           ]
 
           def get(url):
@@ -54,28 +70,44 @@ jobs:
                       time.sleep(20)
               return None
 
+          # Passe types monde : fusion de deux réseaux (leurs antennes diffèrent).
+          # Licences : adsb.lol = ODbL ; airplanes.live = usage NON COMMERCIAL
+          # uniquement — HéliRadar est un outil strictement personnel (à retirer
+          # si commercialisation un jour).
           merged = {}
-          j = get(f"https://api.adsb.lol/v2/type/{TYPES}")
-          if not j:
-              raise SystemExit("adsb.lol inaccessible (requête types)")
-          for ac in j.get("ac", []):
-              merged[ac["hex"]] = ac
-          print(f"passe types : {len(merged)} appareils")
+          for name, base in [("adsb.lol", "https://api.adsb.lol/v2"),
+                             ("airplanes.live", "https://api.airplanes.live/v2")]:
+              j = get(f"{base}/type/{TYPES}")
+              if not j:
+                  print(f"types {name} : indisponible")
+                  continue
+              news = 0
+              for ac in j.get("ac", []):
+                  if ac.get("hex") and ac["hex"] not in merged:
+                      merged[ac["hex"]] = ac
+                      news += 1
+              print(f"types {name} : +{news} (total {len(merged)})")
+              time.sleep(1.2)
+          if not merged:
+              raise SystemExit("aucune source types disponible")
 
           # Passe complète 2×/heure seulement (runs de :02 et :32)
           minute = datetime.datetime.now(datetime.UTC).minute
           if minute < 10 or 30 <= minute < 40:
+              # source alternée : :02 → adsb.lol, :32 → airplanes.live
+              base = "https://api.adsb.lol/v2" if minute < 10 else "https://api.airplanes.live/v2"
+              print(f"cercles via {base}")
+              total_news = 0
               for lat, lon, r in CIRCLES:
                   time.sleep(1.3)
-                  j = get(f"https://api.adsb.lol/v2/point/{lat}/{lon}/{r}")
+                  j = get(f"{base}/point/{lat}/{lon}/{r}")
                   if not j:
                       continue
-                  news = 0
                   for ac in j.get("ac", []):
-                      if ac.get("category") == "A7" and ac["hex"] not in merged:
+                      if ac.get("category") == "A7" and ac.get("hex") and ac["hex"] not in merged:
                           merged[ac["hex"]] = ac
-                          news += 1
-                  print(f"cercle ({lat},{lon}) : +{news}")
+                          total_news += 1
+              print(f"cercles : +{total_news} hélicos catégorie A7 sans code type")
           else:
               print("passe cercles sautée (réservée aux runs de :02 et :32)")
 
