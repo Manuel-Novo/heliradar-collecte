@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
+      - uses: actions/checkout@v4
       - name: Récupérer adsb.lol et pousser vers le Worker
         env:
           RUN_KEY: ${{ secrets.HELIRADAR_RUN_KEY }}
@@ -112,22 +113,51 @@ jobs:
               print("passe cercles sautée (réservée aux runs de :02 et :32)")
 
           print(f"total fusionné : {len(merged)} hélicoptères")
-          json.dump({"ac": list(merged.values())}, open("/tmp/helis.json", "w"))
+          # collected_ts : le Worker respecte l'heure de COLLECTE même si le
+          # fichier est rejoué plus tard depuis le tampon (panne de la base)
+          json.dump({"collected_ts": int(time.time()), "ac": list(merged.values())},
+                    open("/tmp/helis.json", "w"))
           EOF
-          # envoi vers le Worker : 3 tentatives (une erreur HTTP passagère de
-          # Cloudflare/D1 ne doit pas faire perdre une collecte déjà réussie)
+          # Envoi vers la base, avec TAMPON anti-panne : si la base est
+          # injoignable (ex. incident Cloudflare D1), la collecte est commitée
+          # dans pending/ et rejouée automatiquement à la reprise. Aucune
+          # photo perdue, et pas d'email d'échec pour une panne externe.
+          post() {
+            curl -sf --max-time 120 -X POST \
+              -H 'Content-Type: application/json' \
+              --data-binary "@$1" \
+              "https://heliradar-collector.manuel-7lopes.workers.dev/ingest?key=$RUN_KEY"
+          }
+          git config user.name "heliradar-bot"
+          git config user.email "actions@github.com"
+          ok=0
           for attempt in 1 2 3; do
-            if curl -sf --max-time 120 -X POST \
-                -H 'Content-Type: application/json' \
-                --data-binary @/tmp/helis.json \
-                "https://heliradar-collector.manuel-7lopes.workers.dev/ingest?key=$RUN_KEY"; then
-              exit 0
-            fi
-            echo "POST vers le Worker refusé (essai $attempt), nouvelle tentative dans 20 s…"
+            if post /tmp/helis.json; then ok=1; echo; break; fi
+            echo "envoi refusé (essai $attempt), nouvelle tentative dans 20 s…"
             sleep 20
           done
-          echo "échec définitif de l'envoi après 3 tentatives"
-          exit 1
+          if [ "$ok" = "1" ]; then
+            # base joignable → rejouer les collectes en attente, s'il y en a
+            flushed=0
+            for f in pending/*.json; do
+              [ -e "$f" ] || break
+              if post "$f"; then echo; git rm -q "$f"; flushed=$((flushed+1)); sleep 2; else break; fi
+            done
+            if [ "$flushed" -gt 0 ]; then
+              git commit -m "tampon : $flushed collecte(s) rejouée(s) après la panne"
+              git pull --rebase >/dev/null 2>&1 || true
+              git push || echo "push impossible (course entre runs), sans gravité"
+            fi
+            echo "envoi OK (tampon rejoué : $flushed fichier(s))"
+          else
+            mkdir -p pending
+            cp /tmp/helis.json "pending/$(date -u +%Y%m%dT%H%M%S).json"
+            git add pending
+            git commit -m "tampon : base indisponible, collecte mise en attente"
+            git pull --rebase >/dev/null 2>&1 || true
+            git push || echo "push du tampon impossible (course entre runs)"
+            echo "⚠️ base indisponible → collecte préservée dans pending/, rejouée à la reprise"
+          fi
 
       # GitHub désactive les crons après 60 j sans activité du repo :
       # un commit vide de maintien le 1er du mois suffit à rester actif.
