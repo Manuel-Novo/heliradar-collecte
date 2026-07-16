@@ -82,10 +82,20 @@ jobs:
           print(f"total fusionné : {len(merged)} hélicoptères")
           json.dump({"ac": list(merged.values())}, open("/tmp/helis.json", "w"))
           EOF
-          curl -sf --max-time 120 -X POST \
-            -H 'Content-Type: application/json' \
-            --data-binary @/tmp/helis.json \
-            "https://heliradar-collector.manuel-7lopes.workers.dev/ingest?key=$RUN_KEY"
+          # envoi vers le Worker : 3 tentatives (une erreur HTTP passagère de
+          # Cloudflare/D1 ne doit pas faire perdre une collecte déjà réussie)
+          for attempt in 1 2 3; do
+            if curl -sf --max-time 120 -X POST \
+                -H 'Content-Type: application/json' \
+                --data-binary @/tmp/helis.json \
+                "https://heliradar-collector.manuel-7lopes.workers.dev/ingest?key=$RUN_KEY"; then
+              exit 0
+            fi
+            echo "POST vers le Worker refusé (essai $attempt), nouvelle tentative dans 20 s…"
+            sleep 20
+          done
+          echo "échec définitif de l'envoi après 3 tentatives"
+          exit 1
 
       # GitHub désactive les crons après 60 j sans activité du repo :
       # un commit vide de maintien le 1er du mois suffit à rester actif.
