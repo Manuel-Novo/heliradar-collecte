@@ -18,7 +18,7 @@ permissions:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - name: Récupérer adsb.lol et pousser vers le Worker
@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'EOF'
-          import datetime, json, time, urllib.request
+          import datetime, json, os, time, urllib.request
 
           TYPES = ("R22,R44,R66,R88,EC20,EC25,EC30,EC35,EC45,EC55,EC75,H160,AS32,AS3B,AS50,AS55,AS65,"
                    "TIGR,B105,BK17,ALO2,ALO3,GAZL,PUMA,LAMA,B06,B06T,B212,B214,B222,B230,B407,B412,"
@@ -135,6 +135,38 @@ jobs:
               print(f"cercles : +{total_news} hélicos catégorie A7 sans code type")
           else:
               print("passe cercles sautée (réservée aux runs de :02 et :32)")
+
+          # Passe « registre » : les hélicos déjà connus qui n'annoncent pas leur
+          # type et volent hors des cercles sont invisibles aux deux passes
+          # précédentes. On balaie un quart du registre à chaque run (registre
+          # complet couvert chaque heure), par lots de 100 et ~3 s d'écart pour
+          # rester sous les limites de débit des réseaux.
+          RUN_KEY = os.environ["RUN_KEY"]
+          WORKER = "https://heliradar-collector.manuel-7lopes.workers.dev"
+          known = get(f"{WORKER}/hexlist?days=30&key={RUN_KEY}")
+          if known:
+              part = minute // 15                      # :02→0, :17→1, :32→2, :47→3
+              mine = [h for i, h in enumerate(known) if i % 4 == part]
+              hex_src = "https://api.adsb.lol/v2" if part % 2 == 0 else "https://api.airplanes.live/v2"
+              print(f"registre : {len(known)} connus, balayage du quart {part} ({len(mine)}) via {hex_src}")
+              news, fails = 0, 0
+              for i in range(0, len(mine), 100):
+                  batch = mine[i:i+100]
+                  j = get(f"{hex_src}/hex/" + ",".join(batch))
+                  if j is None:
+                      fails += 1
+                      if fails >= 3:
+                          print("  trop d'échecs, balayage interrompu")
+                          break
+                  else:
+                      for ac in j.get("ac", []):
+                          if ac.get("lat") is not None and ac.get("hex") and ac["hex"] not in merged:
+                              merged[ac["hex"]] = ac
+                              news += 1
+                  time.sleep(3)
+              print(f"registre : +{news} hélicos hors passes types/cercles")
+          else:
+              print("registre : /hexlist indisponible, passe sautée")
 
           print(f"total fusionné : {len(merged)} hélicoptères")
           # collected_ts : le Worker respecte l'heure de COLLECTE même si le
