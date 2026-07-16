@@ -33,7 +33,8 @@ jobs:
                    "TIGR,B105,BK17,ALO2,ALO3,GAZL,PUMA,LAMA,B06,B06T,B212,B214,B222,B230,B407,B412,"
                    "B427,B429,B430,B505,B47G,B47J,UH1,A109,A119,A129,A139,A149,A169,A189,AW09,EH10,LYNX,S61,"
                    "S64,S76,S92,H60,H53,H47,H64,V22,MD52,MD60,EXPL,HU50,H269,KA26,KA27,KA32,KA52,KA62,"
-                   "MI2,MI8,MI14,MI17,MI24,MI26,MI28,MI34,MI38,EN28,EN48,G2CA,NH90,DHRU")
+                   "MI2,MI8,MI14,MI17,MI24,MI26,MI28,MI34,MI38,EN28,EN48,G2CA,NH90,DHRU,"
+                   "H500,S55,S58T,S330,S333,UH12,EXEC,A600,KMAX,K126,B47T,A249")
 
           # Zones denses sur les 6 continents (hélicos sans code type, catégorie A7)
           CIRCLES = [
@@ -58,6 +59,21 @@ jobs:
               (35.5, 137.0, 250), (24.0, 121.0, 250),
               # Océanie
               (-33.0, 150.5, 250), (-31.9, 115.9, 250), (-41.0, 174.0, 250),
+              (-37.8, 145.0, 250), (-27.5, 153.0, 250), (-16.9, 145.8, 250),
+              # Amérique du Nord (complément)
+              (61.2, -149.9, 250), (20.8, -156.3, 250), (41.8, -87.6, 250),
+              (39.7, -104.9, 250), (47.5, -52.7, 250),
+              # Europe (complément)
+              (58.0, -1.0, 250), (53.0, -8.0, 250), (64.1, -21.9, 250),
+              (41.0, 29.0, 250), (59.0, 25.0, 250),
+              # DOM-TOM
+              (-21.1, 55.5, 250), (4.9, -52.3, 250), (14.6, -61.0, 250),
+              (-17.5, -149.6, 250), (-22.3, 166.4, 250),
+              # Asie du Sud-Est & Chine côtière
+              (10.8, 106.7, 250), (14.6, 121.0, 250), (-6.2, 106.8, 250),
+              (5.0, 115.0, 250), (31.2, 121.5, 250),
+              # Afrique (complément)
+              (33.6, -7.6, 250), (-8.8, 13.2, 250),
           ]
 
           def get(url):
@@ -93,18 +109,26 @@ jobs:
               raise SystemExit("aucune source types disponible")
 
           # Passe complète 2×/heure seulement (runs de :02 et :32)
-          minute = datetime.datetime.now(datetime.UTC).minute
+          now_utc = datetime.datetime.now(datetime.UTC)
+          minute = now_utc.minute
           if minute < 10 or 30 <= minute < 40:
-              # source alternée : :02 → adsb.lol, :32 → airplanes.live
-              base = "https://api.adsb.lol/v2" if minute < 10 else "https://api.airplanes.live/v2"
-              print(f"cercles via {base}")
+              # rotation sur 3 réseaux (antennes différentes) au fil des passes
+              SOURCES = ["adsb.lol", "airplanes.live", "adsb.fi"]
+              idx = (now_utc.hour * 2 + (0 if minute < 10 else 1)) % 3
+              src = SOURCES[idx]
+              def circle_url(lat, lon, r):
+                  if src == "adsb.fi":
+                      return f"https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{r}"
+                  base = "https://api.adsb.lol/v2" if src == "adsb.lol" else "https://api.airplanes.live/v2"
+                  return f"{base}/point/{lat}/{lon}/{r}"
+              print(f"cercles via {src}")
               total_news = 0
               for lat, lon, r in CIRCLES:
                   time.sleep(1.3)
-                  j = get(f"{base}/point/{lat}/{lon}/{r}")
+                  j = get(circle_url(lat, lon, r))
                   if not j:
                       continue
-                  for ac in j.get("ac", []):
+                  for ac in (j.get("ac") or j.get("aircraft") or []):
                       if ac.get("category") == "A7" and ac.get("hex") and ac["hex"] not in merged:
                           merged[ac["hex"]] = ac
                           total_news += 1
