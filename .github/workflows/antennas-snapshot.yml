@@ -17,7 +17,7 @@ jobs:
           RUN_KEY: ${{ secrets.HELIRADAR_RUN_KEY }}
         run: |
           python3 - <<'PY' > /tmp/antennas.json
-          import json, urllib.request
+          import json, sys, urllib.request
           REGIONS = ["0A", "0B", "0C", "0D", "1A", "2A", "2B", "2C"]
           URL = "https://mlat.adsb.lol/api/0/mlat-server/{}/sync.json"
           stations = []
@@ -32,8 +32,8 @@ jobs:
                           continue
                       stations.append({"n": name, "lat": lat, "lon": lon, "r": reg})
               except Exception as e:
-                  print(f"region {reg} KO: {e}")
-          print(json.dumps({"count": len(stations), "stations": stations}))
+                  print(f"region {reg} KO: {e}", file=sys.stderr)  # logs → stderr, PAS dans le JSON
+          json.dump({"count": len(stations), "stations": stations}, sys.stdout)
           PY
 
           COUNT=$(python3 -c "import json;print(json.load(open('/tmp/antennas.json'))['count'])")
