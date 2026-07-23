@@ -1,0 +1,51 @@
+name: Snapshot carte des antennes
+
+# Une fois par semaine : capture la liste des stations du réseau (mlat.adsb.lol)
+# et la pousse au Worker (D1). adsb.lol bloque les IP Cloudflare → c'est GitHub
+# (IP non bloquées) qui fait le fetch. Sert de repli quand la source live est down.
+on:
+  schedule:
+    - cron: "12 4 * * 1"   # lundi 04h12 UTC
+  workflow_dispatch: {}
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupère la carte des antennes et la pousse au Worker
+        env:
+          RUN_KEY: ${{ secrets.HELIRADAR_RUN_KEY }}
+        run: |
+          python3 - <<'PY' > /tmp/antennas.json
+          import json, urllib.request
+          REGIONS = ["0A", "0B", "0C", "0D", "1A", "2A", "2B", "2C"]
+          URL = "https://mlat.adsb.lol/api/0/mlat-server/{}/sync.json"
+          stations = []
+          for reg in REGIONS:
+              try:
+                  req = urllib.request.Request(URL.format(reg), headers={"User-Agent": "heliradar-snapshot"})
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      data = json.load(r)
+                  for name, info in data.items():
+                      lat, lon = info.get("lat"), info.get("lon")
+                      if lat is None or lon is None or (lat == 0 and lon == 0):
+                          continue
+                      stations.append({"n": name, "lat": lat, "lon": lon, "r": reg})
+              except Exception as e:
+                  print(f"region {reg} KO: {e}")
+          print(json.dumps({"count": len(stations), "stations": stations}))
+          PY
+
+          COUNT=$(python3 -c "import json;print(json.load(open('/tmp/antennas.json'))['count'])")
+          echo "Stations récupérées : $COUNT"
+          if [ "$COUNT" -lt 100 ]; then
+            echo "Trop peu de stations (adsb.lol probablement en panne) — on n'écrase pas le snapshot."
+            exit 0
+          fi
+
+          curl -sf --max-time 120 -X POST \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/antennas.json \
+            "https://heliradar-collector.manuel-7lopes.workers.dev/antennas-ingest?key=$RUN_KEY"
+          echo ""
+          echo "Snapshot poussé au Worker ✅"
