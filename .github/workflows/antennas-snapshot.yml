@@ -5,7 +5,7 @@ name: Snapshot carte des antennes
 # (IP non bloquées) qui fait le fetch. Sert de repli quand la source live est down.
 on:
   schedule:
-    - cron: "12 4 * * 1"   # lundi 04h12 UTC
+    - cron: "12 4,16 * * *"   # 2x/jour : capture dès qu adsb.lol revient (no-op si down)
   workflow_dispatch: {}
 
 jobs:
