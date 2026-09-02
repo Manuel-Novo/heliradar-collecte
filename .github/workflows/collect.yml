@@ -8,8 +8,6 @@
 name: Collecte hélicos
 
 on:
-  schedule:
-    - cron: "2,17,32,47 * * * *"   # décalé de l'heure pile (crons GH surchargés à :00)
   workflow_dispatch: {}
 
 permissions:
